@@ -23,7 +23,6 @@ backup_lock = Lock()
 
 # --- Configuration ---
 CONFIG_PATH = '/config/config.yml'
-TEMP_MOUNT_POINT = '/mnt/restic_backup_mount'
 
 def run_command(command, shell=False):
     """Runs a shell command, logs output, and raises an exception on error."""
@@ -64,28 +63,52 @@ def perform_backup_thread():
             snapshot_name = f"restic-backup-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
             full_snapshot_name = f'{dataset}@{snapshot_name}'
             backup_status["current_task"] = f"Processing dataset: {dataset}"
+
+            safe_dataset_name = dataset.replace('/', '_')
+            temp_mount_point = f"/mnt/restic_backup_{safe_dataset_name}"
+            run_command(['mkdir', '-p', temp_mount_point])
             
             try:
-                run_command(['mkdir', '-p', TEMP_MOUNT_POINT])
+                parent_id = None
+                try:
+                    find_parent_cmd = ['restic', 'snapshots', '--tag', dataset, '--json']
+                    result = subprocess.run(find_parent_cmd, capture_output=True, text=True, check=True, env=os.environ.copy())
+                    all_snapshots = json.loads(result.stdout)
+                    if all_snapshots:
+                        all_snapshots.sort(key=lambda s: datetime.fromisoformat(s['time']))
+                        parent_snapshot = all_snapshots[-1]
+                        parent_id = parent_snapshot['short_id']
+                except Exception as e:
+                    print(f"Could not find parent snapshot for tag '{dataset}'. This is normal for a first backup. Error: {e}")
+
+                backup_cmd = ['restic', 'backup', '--tag', dataset, '--tag', full_snapshot_name]
+                if parent_id:
+                    backup_cmd.extend(['--parent', parent_id])
+                    print(f"Using parent snapshot {parent_id} for this backup.")
+                backup_cmd.append(temp_mount_point)
+
                 run_command(['zfs', 'snapshot', '-r', full_snapshot_name])
-                run_command(['mount', '-t', 'zfs', full_snapshot_name, TEMP_MOUNT_POINT])
-                run_command(['restic', 'backup', '--tag', dataset, '--tag', full_snapshot_name, TEMP_MOUNT_POINT])
+                run_command(['mount', '-t', 'zfs', full_snapshot_name, temp_mount_point])
+                run_command(backup_cmd)
             finally:
                 backup_status["current_task"] = f"Cleaning up: {dataset}"
-                try: run_command(['umount', TEMP_MOUNT_POINT])
+                try: run_command(['umount', temp_mount_point])
                 except Exception as e: print(f"Cleanup warning: Failed to unmount: {e}")
+                
                 try: run_command(['zfs', 'destroy', '-r', full_snapshot_name])
                 except Exception as e: print(f"Cleanup warning: Failed to destroy snapshot: {e}")
-                try: run_command(['rmdir', TEMP_MOUNT_POINT])
+
+                try: run_command(['rmdir', temp_mount_point])
                 except Exception as e: print(f"Cleanup warning: Failed to remove temp directory: {e}")
 
         backup_status["current_task"] = "Pruning old backups"
-        retention_args = []
-        for key, value in config.get('retention', {}).items():
-            retention_args.append(f'--{key}')
-            retention_args.append(str(value))
-        if retention_args:
-            run_command(['restic', 'forget', '--prune', '--group-by', 'tags'] + retention_args)
+        retention_policy = config.get('retention', {})
+        if retention_policy:
+            retention_args = []
+            for key, value in retention_policy.items():
+                retention_args.extend([f'--{key}', str(value)])
+            prune_cmd = ['restic', 'forget', '--prune', '--group-by', 'paths'] + retention_args
+            run_command(prune_cmd)
 
         backup_status["last_completed_run"] = {
             "outcome": "success",
@@ -144,5 +167,5 @@ def snapshots_endpoint():
 
 
 if __name__ == '__main__':
-    print("Starting backup web server with QoL improvements...")
+    print("Starting backup web server...")
     app.run(host='0.0.0.0', port=8000)
