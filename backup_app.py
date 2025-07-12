@@ -24,6 +24,33 @@ backup_lock = Lock()
 # --- Configuration ---
 CONFIG_PATH = '/config/config.yml'
 
+def send_gotify_notification(title, message, priority=3):
+    """Sends a push notification via Gotify if configured."""
+    gotify_url = os.environ.get('GOTIFY_URL')
+    gotify_token = os.environ.get('GOTIFY_TOKEN')
+
+    if not gotify_url or not gotify_token:
+        log_line = "Gotify environment variables not set. Skipping notification."
+        print(log_line)
+        backup_status["log"].append(log_line)
+        return
+
+    full_url = f"{gotify_url}?token={gotify_token}"
+    try:
+        log_line = f"Sending Gotify notification: {title}"
+        print(log_line)
+        backup_status["log"].append(log_line)
+        # Using subprocess.run for this simple, self-contained command
+        subprocess.run(
+            ['curl', '-F', f"title={title}", '-F', f"message={message}", '-F', f"priority={priority}", full_url],
+            check=True, capture_output=True
+        )
+    except Exception as e:
+        # A notification failure should not crash the main script
+        log_line = f"!!! Could not send Gotify notification. Error: {e}"
+        print(log_line)
+        backup_status["log"].append(log_line)
+
 def run_command(command, shell=False):
     """Runs a shell command, logs output, and raises an exception on error."""
     log_line = f"Executing: {command if shell else ' '.join(command)}"
@@ -110,12 +137,14 @@ def perform_backup_thread():
             prune_cmd = ['restic', 'forget', '--prune', '--group-by', 'paths'] + retention_args
             run_command(prune_cmd)
 
+        success_details = "Backup and prune completed successfully."
         backup_status["last_completed_run"] = {
             "outcome": "success",
             "finish_time": datetime.now().isoformat(),
-            "details": "Backup and prune completed successfully."
+            "details": success_details
         }
-
+        # Send notification on success
+        send_gotify_notification("✅ Backup Success", success_details)
     except Exception as e:
         error_message = f"Failed: {e}"
         print(f"!!! A CRITICAL ERROR OCCURRED: {error_message}")
@@ -124,6 +153,8 @@ def perform_backup_thread():
             "finish_time": datetime.now().isoformat(),
             "details": error_message
         }
+        # Send notification on failure with high priority
+        send_gotify_notification("❌ Backup FAILED", error_message, priority=8)
     finally:
         backup_status["live_status"] = "idle"
         backup_status["current_task"] = "N/A"
