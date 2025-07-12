@@ -21,9 +21,14 @@ RUN curl -L -o restic.bz2 https://github.com/restic/restic/releases/download/v0.
 
 RUN curl -L https://rclone.org/install.sh | bash
 
-RUN pip3 install --no-cache-dir --break-system-packages Flask PyYAML
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
-COPY backup_app.py /app/backup_app.py
+COPY app.py /app/app.py
+COPY backup.py /app/backup.py
+
+WORKDIR /app
 
 EXPOSE 8000
-CMD ["python3", "/app/backup_app.py"]
+CMD ["python3", "app.py"]
