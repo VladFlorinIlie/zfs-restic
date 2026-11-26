@@ -226,21 +226,21 @@ def test_rclone_overview_and_drive_remote(rclone_env):
     assert c.post("/api/rclone/test", json={"remote": "loc"}, headers=AUTH).get_json()["ok"]
 
     tok = json.dumps({"access_token": "x", "token_type": "Bearer", "refresh_token": "r", "expiry": "2030-01-01T00:00:00Z"})
-    r = c.post("/api/rclone/drive", json={"name": "gd", "token": tok}, headers=AUTH)
+    r = c.post("/api/rclone/authorize", json={"name": "gd", "type": "drive", "token": tok}, headers=AUTH)
     assert r.status_code == 200, r.data
     gd = next(x for x in c.get("/api/rclone", headers=AUTH).get_json()["remotes"] if x["name"] == "gd")
     assert gd["type"] == "drive" and gd["options"]["token"] == "•••"
     assert not gd["drive"]["own_client_id"] and any("shared Google Drive client_id" in w for w in gd["warnings"])
 
-    r = c.post("/api/rclone/drive", json={"name": "gd", "token": tok, "client_id": "id.apps.googleusercontent.com",
+    r = c.post("/api/rclone/authorize", json={"name": "gd", "token": tok, "client_id": "id.apps.googleusercontent.com",
                                           "client_secret": "sec"}, headers=AUTH)
     gd = next(x for x in c.get("/api/rclone", headers=AUTH).get_json()["remotes"] if x["name"] == "gd")
     assert gd["drive"]["own_client_id"] and gd["options"]["client_secret"] == "•••" and not gd["warnings"]
     assert len(c.get("/api/rclone", headers=AUTH).get_json()["versions"]) == 2
 
     # Re-authorising with blank client fields must keep the remote's own client and root folder
-    c.post("/api/rclone/drive", json={"name": "gd", "token": tok, "root_folder_id": "ROOT1"}, headers=AUTH)
-    r = c.post("/api/rclone/drive", json={"name": "gd", "token": tok.replace('"x"', '"y"')}, headers=AUTH)
+    c.post("/api/rclone/authorize", json={"name": "gd", "token": tok, "root_folder_id": "ROOT1"}, headers=AUTH)
+    r = c.post("/api/rclone/authorize", json={"name": "gd", "token": tok.replace('"x"', '"y"')}, headers=AUTH)
     assert r.status_code == 200
     from zfs_restic import rclone as rc
     cfg = rc.dump()["gd"]
@@ -248,15 +248,16 @@ def test_rclone_overview_and_drive_remote(rclone_env):
     assert cfg["root_folder_id"] == "ROOT1" and '"y"' in cfg["token"]
 
     no_refresh = json.dumps({"access_token": "x"})
-    assert c.post("/api/rclone/drive", json={"name": "gd", "token": no_refresh}, headers=AUTH).status_code == 400
-    assert c.post("/api/rclone/drive", json={"name": "gd", "token": "nope"}, headers=AUTH).status_code == 400
-    cmd = c.post("/api/rclone/authorize-command", json={"client_id": "a", "client_secret": "b"}, headers=AUTH)
-    assert cmd.get_json()["command"] == 'rclone authorize "drive" "a" "b"'
+    assert c.post("/api/rclone/authorize", json={"name": "gd", "token": no_refresh}, headers=AUTH).status_code == 400
+    assert c.post("/api/rclone/authorize", json={"name": "gd", "token": "nope"}, headers=AUTH).status_code == 400
+    cmd = c.post("/api/rclone/authorize-command", json={"type": "onedrive", "client_id": "a", "client_secret": "b"},
+                 headers=AUTH)
+    assert cmd.get_json()["command"] == 'rclone authorize "onedrive" "a" "b"'
 
 
 def test_rclone_changes_require_auth_token(rclone_env):
     m, c = make(rclone_env)
-    assert c.post("/api/rclone/drive", json={"name": "gd", "token": "{}"}).status_code == 403
+    assert c.post("/api/rclone/authorize", json={"name": "gd", "token": "{}"}).status_code == 403
 
 
 def test_recovery_kit(rclone_env):
@@ -296,3 +297,59 @@ def test_cron_backup_skipped_while_busy_notifies(env, http_sink):
     assert m.wait_idle(120)
     skipped = [x for x in received if x["json"]["title"].startswith("⚠️ Backup skipped")]
     assert len(skipped) == 1 and skipped[0]["json"]["priority"] == 7
+
+
+def test_reauthorise_any_oauth_remote_type(rclone_env):
+    conf = rclone_env.root / "rclone.conf"
+    conf.write_text(conf.read_text() + "\n[od]\ntype = onedrive\ndrive_id = D1\ndrive_type = personal\n"
+                    'token = {"access_token":"old","refresh_token":"r","expiry":"2020-01-01T00:00:00Z"}\n'
+                    "\n[pc]\ntype = pcloud\n")
+    m, c = make(rclone_env, auth_token="tok")
+    remotes = {r["name"]: r for r in c.get("/api/rclone", headers=AUTH).get_json()["remotes"]}
+    assert remotes["od"]["can_reauthorise"] and not remotes["loc"]["can_reauthorise"]
+    assert not any("client_id" in w for w in remotes["od"]["warnings"])  # Drive-only warning
+
+    new = json.dumps({"access_token": "new", "refresh_token": "r2", "expiry": "2030-01-01T00:00:00Z"})
+    r = c.post("/api/rclone/authorize", json={"name": "od", "token": new}, headers=AUTH)
+    assert r.status_code == 200 and r.get_json()["type"] == "onedrive", r.data
+    from zfs_restic import rclone as rc
+    od = rc.dump()["od"]
+    assert '"new"' in od["token"] and od["drive_id"] == "D1" and od["drive_type"] == "personal"
+
+    # pcloud tokens never expire and carry no refresh_token: accepted
+    forever = json.dumps({"access_token": "p", "token_type": "bearer", "expiry": "0001-01-01T00:00:00Z"})
+    assert c.post("/api/rclone/authorize", json={"name": "pc", "token": forever}, headers=AUTH).status_code == 200
+    # drive-only options are refused for other types; non-OAuth remotes and non-creatable new types too
+    assert c.post("/api/rclone/authorize", json={"name": "od", "token": new, "root_folder_id": "x"},
+                  headers=AUTH).status_code == 400
+    assert c.post("/api/rclone/authorize", json={"name": "loc", "token": new}, headers=AUTH).status_code == 400
+    assert c.post("/api/rclone/authorize", json={"name": "new-od", "type": "onedrive", "token": new},
+                  headers=AUTH).status_code == 400
+
+
+def test_backend_detection_and_masking():
+    from zfs_restic import backend
+    assert backend.scheme_of("rclone:gdrive:restic") == "rclone"
+    assert backend.scheme_of("s3:https://s3.amazonaws.com/bucket") == "s3"
+    assert backend.scheme_of("/srv/restic") == "local" and backend.scheme_of("local:/srv/r") == "local"
+    assert backend.scheme_of("sftp:user@host:/srv/restic") == "sftp"
+    assert backend.mask_repository("rest:https://u:secret@host:8000/r") == "rest:https://u:•••@host:8000/r"
+    assert backend.mask_repository("s3:https://s3.amazonaws.com/b") == "s3:https://s3.amazonaws.com/b"
+
+
+def test_recovery_kit_is_backend_generic(env, monkeypatch):
+    m, c = make(env, auth_token="tok")  # `env` uses a plain local-path repository
+    backup(c, m, AUTH)
+    md = c.get("/api/recovery-kit?format=md&secrets=1", headers=AUTH).get_data(as_text=True)
+    assert "**Backend:** local directory" in md and "Make the repository folder available" in md
+    assert "rclone" not in md.split("## 3.")[1].split("## 4.")[0]  # no rclone steps for a non-rclone repo
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA1")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "topsecret")
+    from zfs_restic import backend, recovery
+    monkeypatch.setattr(backend.rclone, "repository", lambda: "s3:https://s3.example.com/bucket")
+    kit = recovery.build_kit(m, include_secrets=False)
+    md = recovery.render_markdown(kit)
+    assert "S3-compatible storage" in md and "AKIA1" in md and "topsecret" not in md
+    assert "export AWS_SECRET_ACCESS_KEY='•••'" in md
+    assert "topsecret" in recovery.render_markdown(recovery.build_kit(m, include_secrets=True))

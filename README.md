@@ -10,8 +10,8 @@ Backs up ZFS datasets with restic: for each dataset it takes a ZFS snapshot, mou
 | **Snapshots** | Browse any snapshot; download files, or folders as `.zip`; **restore a file or folder to the server** (into `RESTORE_DIR`, never overwriting anything); **see what changed** between a snapshot and the previous one. |
 | **Find a file** | Search every snapshot for a name or glob. Shows which snapshots contain each file, when it was first and last seen, and flags files that are gone from the newest snapshot. |
 | **Config** | Edit `config.yml` in place, with validation (including "does this dataset exist?"), a **retention preview** (`restic forget --dry-run` with the edited policy) and previous versions. |
-| **rclone** | Remotes and their health (e.g. still on rclone's shared Google client_id), connection test, and a guided form to set up or re-authorise a Google Drive remote. |
-| **Recovery & alerts** | The **disaster-recovery kit**, plus notification channels and a test button. |
+| **rclone** | Remotes and their health (token state; Drive remotes still on rclone's shared client_id), connection test, and a form to re-authorise any OAuth remote (Drive, OneDrive, Dropbox, Box, pCloud, …) or create a Google Drive remote. |
+| **Recovery & alerts** | The **disaster-recovery kit** (with restore steps and credentials for whichever backend the repository uses), plus notification channels and a test button. |
 
 Saving the config, changing rclone and exporting the kit with secrets only work when `AUTH_TOKEN` is set.
 
@@ -73,7 +73,7 @@ Each dataset is snapshotted **non-recursively**. Child datasets are separate mou
 | GET/PUT | `/api/config` | Read / save `config.yml` (PUT needs the `sha256` you loaded; `409` if the file changed meanwhile) |
 | POST | `/api/config/validate`, `/api/retention/preview` | Validate a draft config; dry-run its retention policy |
 | GET | `/api/storage` | Usage of the rclone remote holding the repository |
-| GET/POST | `/api/rclone`, `/api/rclone/test`, `/api/rclone/drive` | rclone overview, connection test, create/update a Drive remote |
+| GET/POST | `/api/rclone`, `/api/rclone/test`, `/api/rclone/authorize` | rclone overview, connection test, re-authorise an OAuth remote (any type) or create a Google Drive remote |
 | GET | `/api/recovery-kit?format=html\|md[&secrets=1]` | The disaster-recovery kit |
 | POST | `/api/notifications/test` | Send a test notification to every channel |
 | GET | `/healthz` | Liveness check, no auth |

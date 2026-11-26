@@ -7,7 +7,7 @@ import socket
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from . import __version__, rclone, zfs
+from . import __version__, backend, rclone, zfs
 from .utils import human_bytes, now_iso
 
 if TYPE_CHECKING:
@@ -41,11 +41,14 @@ def _password(include_secrets: bool) -> Dict[str, Any]:
 
 
 def build_kit(manager: "BackupManager", include_secrets: bool) -> Dict[str, Any]:
-    repo = rclone.repository()
-    remote = rclone.remote_for_repository(repo)
+    be = backend.detect()
+    repo = be["repository"]
+    remote = be["rclone_remote"]
     kit: Dict[str, Any] = {
         "generated_at": now_iso(), "app_version": __version__, "hostname": socket.gethostname(),
-        "include_secrets": include_secrets, "repository": repo, "password": _password(include_secrets),
+        "include_secrets": include_secrets, "backend": be,
+        "repository": repo if include_secrets else backend.mask_repository(repo),
+        "password": _password(include_secrets),
         "repository_id": manager.restic.repository_id(), "restic_version": manager.restic.version(),
         "rclone_version": rclone.version() if remote else None, "remote": remote,
         "remote_config": None, "remote_error": None, "datasets": [], "config": None, "env": {},
@@ -65,26 +68,50 @@ def build_kit(manager: "BackupManager", include_secrets: bool) -> Dict[str, Any]
             kit["datasets"].append(d)
     except Exception as e:
         kit["datasets_error"] = str(e)
-    for key in ENV_KEYS:
-        if os.environ.get(key):
-            kit["env"][key] = os.environ[key] if (include_secrets or key not in SECRET_ENV) else "•••"
+    for key in ENV_KEYS + backend.credential_env(be["scheme"]):
+        if os.environ.get(key) and key not in kit["env"]:
+            secret = key in SECRET_ENV or key in backend.SECRET_ENV
+            value = os.environ[key]
+            if key == "RESTIC_REPOSITORY" and not include_secrets:
+                value = backend.mask_repository(value)
+            kit["env"][key] = value if (include_secrets or not secret) else "•••"
+    kit["credential_env"] = backend.credential_env(be["scheme"])
     return kit
 
 
+def _access_step(kit: Dict[str, Any]) -> Dict[str, str]:
+    be = kit["backend"]
+    scheme, remote = be["scheme"], be["rclone_remote"]
+    if scheme == "rclone":
+        rtype = be["rclone_type"] or "the same type"
+        body = (f"Paste the remote config from section 1 into ~/.config/rclone/rclone.conf, or create the remote again "
+                f"with `rclone config` (type {rtype}, same name \"{remote}\")")
+        if be["rclone_type"] in rclone.OAUTH_TYPES:
+            body += " and sign in with the account that owns the backups"
+        return {"title": f"Recreate the rclone remote \"{remote}\"", "body": body + ". Then check it works:",
+                "code": f"rclone lsd {remote}:"}
+    if scheme == "local":
+        return {"title": "Make the repository folder available",
+                "body": f"Attach or mount the disk holding the repository so it is reachable at {be.get('location')} "
+                        "(or adjust the repository path below).", "code": ""}
+    if scheme == "sftp":
+        return {"title": "Set up SSH access", "body": "Make sure this machine can log in to the SFTP host with the "
+                "same user (SSH key in ~/.ssh, host key accepted).", "code": ""}
+    keys = kit.get("credential_env") or []
+    return {"title": f"Provide the {be['name']} credentials",
+            "body": "Export the credential variables from section 5 (they were set in the container). See "
+                    "https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html for this backend.",
+            "code": "\n".join(f"export {k}='{kit['env'].get(k, '…')}'" for k in keys)}
+
+
 def _restore_steps(kit: Dict[str, Any]) -> List[Dict[str, str]]:
-    remote = kit["remote"]
-    steps = [{"title": "Install restic and rclone",
-              "body": f"Use restic {kit['restic_version'].split()[1] if kit['restic_version'].startswith('restic ') else ''} "
-                      "or newer (https://github.com/restic/restic/releases)"
-                      + (" and rclone (https://rclone.org/downloads/)." if remote else "."),
-              "code": ""}]
-    if remote:
-        steps.append({
-            "title": f"Recreate the rclone remote \"{remote}\"",
-            "body": "Either paste the remote config from section 1 into ~/.config/rclone/rclone.conf, or create it "
-                    f"again with `rclone config` (Google Drive, same name \"{remote}\") and sign in with the Google "
-                    "account that owns the backups. Then check it works:",
-            "code": f"rclone lsd {remote}:"})
+    rclone_needed = kit["backend"]["scheme"] == "rclone"
+    version = kit["restic_version"].split()[1] if kit["restic_version"].startswith("restic ") else ""
+    steps = [{"title": "Install restic" + (" and rclone" if rclone_needed else ""),
+              "body": f"Use restic {version} or newer (https://github.com/restic/restic/releases)"
+                      + (" and rclone (https://rclone.org/downloads/)." if rclone_needed else "."),
+              "code": ""},
+             _access_step(kit)]
     password_cmd = ("export RESTIC_PASSWORD_COMMAND='" + kit["password"]["command"] + "'"
                     if kit["password"].get("command") else "read -rs RESTIC_PASSWORD && export RESTIC_PASSWORD")
     steps.append({"title": "Point restic at the repository",
@@ -102,8 +129,9 @@ def _restore_steps(kit: Dict[str, Any]) -> List[Dict[str, str]]:
                           "`latest` for an older version, or `restic mount /mnt/restic` to browse everything.",
                   "code": "\n".join(lines) or "restic restore latest --target /restore"})
     steps.append({"title": "Bring zfs-restic back (optional)",
-                  "body": "Run the container again with the same RESTIC_* variables, the rclone config and the "
-                          "config.yml from section 4. Existing snapshots are picked up automatically.",
+                  "body": "Run the container again with the same RESTIC_* and backend variables"
+                          + (", the rclone config" if rclone_needed else "")
+                          + " and the config.yml from section 4. Existing snapshots are picked up automatically.",
                   "code": ""})
     return steps
 
@@ -119,6 +147,7 @@ def render_markdown(kit: Dict[str, Any]) -> str:
         out += ["> Secrets are hidden in this copy. You still need the repository password from somewhere "
                 "else: **without it the backups cannot be decrypted by anyone.**", ""]
     out += ["## 1. Access", "",
+            f"- **Backend:** {kit['backend']['name']}",
             f"- **Repository:** `{kit['repository'] or 'not set'}`",
             f"- **Repository ID:** `{kit['repository_id'] or 'unknown'}`",
             f"- **Password source:** {pw['source']}"]
@@ -128,7 +157,8 @@ def render_markdown(kit: Dict[str, Any]) -> str:
         out.append(f"- **Password command:** `{pw['command']}`")
     out.append(f"- **restic:** {kit['restic_version']}")
     if kit["remote"]:
-        out += [f"- **rclone:** {kit['rclone_version']}", "", f"rclone remote `{kit['remote']}`:", "", "```ini",
+        out += [f"- **rclone:** {kit['rclone_version']}", "", f"rclone remote `{kit['remote']}` "
+                f"({kit['backend']['rclone_type'] or 'unknown type'}):", "", "```ini",
                 kit["remote_config"] or f"# could not read: {kit['remote_error']}", "```"]
     out += ["", "## 2. What is backed up", "",
             "| Dataset | Snapshots | Newest | Size | Path inside snapshots |", "|---|---|---|---|---|"]
@@ -194,6 +224,7 @@ def render_html(kit: Dict[str, Any]) -> str:
 <div class="muted">Generated {e(kit['generated_at'])} · zfs-restic {e(kit['app_version'])} · host {e(kit['hostname'])}</div>
 {banner}
 <h2>1. Access</h2><table>
+<tr><th>Backend</th><td>{e(kit['backend']['name'])}</td></tr>
 <tr><th>Repository</th><td><code>{e(kit['repository'] or 'not set')}</code></td></tr>
 <tr><th>Repository ID</th><td><code>{e(kit['repository_id'] or 'unknown')}</code></td></tr>
 {pw_rows}<tr><th>restic</th><td>{e(kit['restic_version'])}</td></tr>{remote}</table>

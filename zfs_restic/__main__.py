@@ -8,6 +8,7 @@ from waitress import serve
 from . import __version__
 from .config import ConfigError, load_config
 from .manager import BackupManager
+from .notify import Notifier
 from .settings import Settings
 from .web import create_app
 
@@ -22,6 +23,11 @@ def main() -> int:
         print(f"Config OK: {len(cfg.datasets)} dataset(s): {', '.join(cfg.datasets) or '-'}", flush=True)
     except ConfigError as e:
         print(f"WARNING: {e} -- backups will fail until this is fixed.", flush=True)
+
+    if bool(settings.gotify_url) != bool(settings.gotify_token):
+        print("WARNING: only one of GOTIFY_URL / GOTIFY_TOKEN is set -- Gotify notifications are disabled.", flush=True)
+    channels = Notifier(settings).channels
+    print(f"Notifications: {', '.join(channels) if channels else 'none configured'}", flush=True)
 
     if not settings.auth_token:
         print("WARNING: AUTH_TOKEN is not set -- the UI/API (including file downloads) is open to anyone "

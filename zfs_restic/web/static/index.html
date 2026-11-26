@@ -111,7 +111,7 @@
           <label class="row small"><input type="checkbox" id="findIcase" checked> ignore case</label>
           <button class="primary">Search</button>
         </form>
-        <p class="muted small">Searches the directory trees of every snapshot, so the first search can take a while on Google Drive. Results show which snapshots contain each file, and flag files that are gone from the newest snapshot.</p>
+        <p class="muted small">Searches the directory trees of every snapshot, so the first search after a restart can take a while on remote storage. Results show which snapshots contain each file, and flag files that are gone from the newest snapshot.</p>
         <div id="findResults"></div>
       </div>
     </section>
@@ -150,23 +150,25 @@
       <div class="body" id="rcOverview"><span class="muted">Loading…</span></div>
     </section>
     <section>
-      <h2>Set up or re-authorise Google Drive</h2>
+      <h2>Authorise a remote</h2>
       <div class="body">
+        <p class="muted small">Re-authorise any OAuth remote (Google Drive, OneDrive, Dropbox, Box, pCloud, …) when its token stops working, or create a new Google Drive remote. Other remote types (S3, SFTP, …) don't use tokens: create or edit them with <code>rclone config</code>.</p>
         <ol class="steps">
-          <li><b>Create your own OAuth client</b> (rclone's shared one is being retired): in <a class="link" href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> create a project, enable the <i>Google Drive API</i>, configure the OAuth consent screen and <b>publish it to "In production"</b> (in "Testing", Google revokes the token after 7 days), then create an OAuth client of type <i>Desktop app</i>. <a class="link" href="https://rclone.org/drive/#making-your-own-client-id" target="_blank" rel="noopener">rclone's guide</a></li>
-          <li><b>Get a token</b> on a machine with a browser and rclone installed (Windows, WSL or Linux): <pre id="rcAuthCmd" class="log">rclone authorize "drive"</pre> Sign in with the Google account that owns the backups; rclone prints a JSON token.</li>
-          <li><b>Paste it below and save.</b> The current rclone config is kept as a previous version, and the remote is tested straight away.</li>
+          <li><b>Use your own OAuth client</b> if the provider supports it: create a <i>Desktop app</i> OAuth client in the provider's developer console and fill in its ID and secret below (<a class="link" href="https://rclone.org/docs/" target="_blank" rel="noopener">rclone's docs</a> per backend). <span id="rcDriveNote">For Google Drive this is now required, because rclone's shared client_id is being retired. Publish the OAuth consent screen <b>"In production"</b>: in "Testing", Google revokes tokens after 7 days. <a class="link" href="https://rclone.org/drive/#making-your-own-client-id" target="_blank" rel="noopener">Guide</a></span></li>
+          <li><b>Get a token</b> on a machine with a browser and rclone installed (Windows, WSL or Linux), signing in with the account that owns the backups: <pre id="rcAuthCmd" class="log">rclone authorize "drive"</pre></li>
+          <li><b>Paste the JSON it prints below and save.</b> The current rclone config is kept as a previous version, and the remote is tested straight away.</li>
         </ol>
         <form id="rcForm" class="formgrid">
-          <label>Remote name <input id="rcName" required></label>
-          <label>Scope <select id="rcScope"><option value="drive">drive (full access)</option><option value="drive.file">drive.file (only files rclone created)</option></select></label>
-          <label>Client ID <input id="rcClientId" placeholder="…apps.googleusercontent.com"></label>
+          <label>Remote <input id="rcName" list="rcRemoteList" required autocomplete="off"><datalist id="rcRemoteList"></datalist></label>
+          <label>Type <select id="rcType"></select></label>
+          <label>Client ID <input id="rcClientId" placeholder="empty = keep current / rclone default"></label>
           <label>Client secret <input id="rcClientSecret" type="password" autocomplete="off" placeholder="empty = keep current"></label>
-          <label>Root folder ID <input id="rcRoot" placeholder="empty = keep current / none"></label>
+          <label class="drive-only">Scope <select id="rcScope"><option value="">keep current</option><option value="drive">drive (full access)</option><option value="drive.file">drive.file (only files rclone created)</option></select></label>
+          <label class="drive-only">Root folder ID <input id="rcRoot" placeholder="empty = keep current / none"></label>
           <label class="full"><span>Token: the JSON printed by <code>rclone authorize</code></span><textarea id="rcToken" rows="4" class="mono" placeholder='{"access_token":"…","token_type":"Bearer","refresh_token":"…","expiry":"…"}'></textarea></label>
           <div class="full row"><button class="primary" id="rcSave">Save &amp; test</button><span id="rcMsg" class="small"></span></div>
         </form>
-        <p class="muted small">Empty fields keep the remote's current values, so to re-authorise you only need the token. A token only works with the client it was made with: if you change the client ID, generate a new token with it. With scope <i>drive.file</i>, rclone can only see files it created, so keep <i>drive</i> for an existing repository.</p>
+        <p class="muted small">Empty fields keep the remote's current values, so re-authorising only needs the token. A token only works with the OAuth client it was made with: if you change the client ID, generate a new token with it.</p>
       </div>
     </section>
     <section>
@@ -180,8 +182,8 @@
     <section>
       <h2>Disaster-recovery kit <span class="spacer"></span><span id="kitExported" class="small"></span></h2>
       <div class="body">
-        <p>If this server dies, you need three things to get your data back: the <b>repository location</b>, the <b>repository password</b> (without it the backups are unrecoverable by anyone) and access to <b>Google Drive</b>. The kit puts them on one page with step-by-step restore commands and your config.yml.</p>
-        <p class="muted">Print it or save it in your password manager, never on the server itself or in the same Google account.</p>
+        <p>If this server dies, you need three things to get your data back: the <b>repository location</b>, the <b>repository password</b> (without it the backups are unrecoverable by anyone) and access to the <b>storage backend</b>. The kit puts them on one page with step-by-step restore commands and your config.yml.</p>
+        <p class="muted">Print it or save it in your password manager, never on the server itself or in the storage it describes.</p>
         <div class="row">
           <a class="button primary" id="kitSecrets" target="_blank" rel="noopener">Open kit with secrets</a>
           <a class="button" id="kitMd">Download as Markdown (with secrets)</a>

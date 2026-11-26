@@ -1,4 +1,4 @@
-"""rclone remote inspection and (re)configuration -- mainly for Google Drive."""
+"""rclone remote inspection and OAuth (re)authorisation, for any remote type."""
 from __future__ import annotations
 
 import json
@@ -82,12 +82,16 @@ def _token_info(raw: Optional[str]) -> Dict[str, Any]:
 
 
 def describe_remotes() -> List[Dict[str, Any]]:
-    """Remotes with secrets removed, plus Google-Drive-specific health hints."""
+    """Remotes with secrets removed, plus health hints (OAuth token state; Drive client_id retirement)."""
     out = []
     for name, cfg in dump().items():
         rtype = cfg.get("type")
         options = {k: ("•••" if k in SECRET_KEYS and v else v) for k, v in cfg.items() if k != "type"}
-        info: Dict[str, Any] = {"name": name, "type": rtype, "options": options, "warnings": []}
+        info: Dict[str, Any] = {"name": name, "type": rtype, "options": options, "warnings": [],
+                                "oauth": rtype in OAUTH_TYPES, "can_reauthorise": rtype in OAUTH_TYPES,
+                                "own_client_id": bool(cfg.get("client_id")), "token": _token_info(cfg.get("token"))}
+        if rtype in OAUTH_TYPES and rtype != "drive" and not cfg.get("token"):
+            info["warnings"].append("No token: this remote is not authorised yet.")
         if rtype == "drive":
             own_client = bool(cfg.get("client_id"))
             info["drive"] = {
@@ -132,44 +136,81 @@ def test(name: str) -> Dict[str, Any]:
         return {"ok": False, "error": e.output.strip()[-2000:]}
 
 
-def set_drive_remote(name: str, token: str, client_id: str = "", client_secret: str = "",
-                     scope: str = "drive", root_folder_id: str = "") -> None:
-    """Create or update a Google Drive remote from a token produced by `rclone authorize "drive" ...`."""
-    if not NAME_RE.match(name):
-        raise ValueError("invalid remote name")
+# rclone backends that authorise with an OAuth token from `rclone authorize "<type>"`.
+OAUTH_TYPES = {"drive", "onedrive", "dropbox", "box", "pcloud", "google photos", "yandex", "zoho", "hidrive",
+               "putio", "sharefile", "premiumizeme", "mailru"}
+# Types this app can *create* non-interactively; anything else: create with `rclone config`, re-authorise here.
+CREATABLE_TYPES = {"drive"}
+# Extra options the form may set, per type.
+EXTRA_OPTIONS = {"drive": {"scope": {"drive", "drive.file"}, "root_folder_id": None}}
+
+
+def _check_token(token: str) -> str:
     try:
         tok = json.loads(token)
     except ValueError:
         raise ValueError("token must be the JSON printed by `rclone authorize` ({\"access_token\": ...})") from None
     if not isinstance(tok, dict) or "access_token" not in tok:
         raise ValueError("token JSON has no access_token")
-    if not tok.get("refresh_token"):
-        raise ValueError("token has no refresh_token; it would stop working within an hour")
-    if scope not in ("drive", "drive.file"):
-        raise ValueError("scope must be 'drive' or 'drive.file'")
-    if bool(client_id) != bool(client_secret):
-        raise ValueError("client_id and client_secret must be given together")
+    # Non-expiring tokens (e.g. pCloud) carry the zero time as expiry; everything else needs a refresh_token.
+    never_expires = str(tok.get("expiry") or "").startswith("0001-")
+    if not tok.get("refresh_token") and not never_expires:
+        raise ValueError("token has no refresh_token, so it would stop working within hours")
+    return json.dumps(tok, separators=(",", ":"))
 
-    params = {"scope": scope, "token": json.dumps(tok, separators=(",", ":")),
-              "client_id": client_id, "client_secret": client_secret, "root_folder_id": root_folder_id}
-    exists = name in dump()
+
+def set_oauth_remote(name: str, token: str, client_id: str = "", client_secret: str = "",
+                     new_type: Optional[str] = None, extra: Optional[Dict[str, str]] = None) -> str:
+    """Re-authorise an existing OAuth remote (any type), or create a new one of a creatable type, from a token
+    produced by `rclone authorize`. Empty fields keep the remote's current values. Returns the remote type."""
+    if not NAME_RE.match(name or ""):
+        raise ValueError("invalid remote name")
+    if client_id and not client_secret and not _has_option(name, "client_secret"):
+        raise ValueError("client_id needs a client_secret")
+    if client_secret and not client_id and not _has_option(name, "client_id"):
+        raise ValueError("client_secret needs a client_id")
+    current = dump().get(name)
+    rtype = current.get("type") if current else new_type
+    if current is None and rtype not in CREATABLE_TYPES:
+        raise ValueError(f"creating '{rtype}' remotes here isn't supported: create it with `rclone config`, "
+                         "then re-authorise it here" if rtype else "unknown remote; choose a type to create it")
+    if rtype not in OAUTH_TYPES:
+        raise ValueError(f"remote '{name}' is of type '{rtype}', which doesn't use OAuth tokens")
+
+    params = {"token": _check_token(token), "client_id": client_id, "client_secret": client_secret}
+    allowed = EXTRA_OPTIONS.get(rtype, {})
+    for key, value in (extra or {}).items():
+        if not value:
+            continue
+        if key not in allowed:
+            raise ValueError(f"option '{key}' can't be set for {rtype} remotes here")
+        if allowed[key] is not None and value not in allowed[key]:
+            raise ValueError(f"{key} must be one of: {', '.join(sorted(allowed[key]))}")
+        params[key] = value
+    if current is None and rtype == "drive":
+        params.setdefault("scope", "drive")
+
     args: List[str] = []
     for k, v in params.items():
-        # Empty fields never clear anything: re-authorising an existing remote with blank client fields
-        # must keep its own client_id/secret and root folder, or the remote silently breaks.
+        # Empty fields never clear anything: re-authorising with blank client fields must keep the remote's
+        # own client_id/secret and other options, or the remote silently breaks.
         if v:
             args += [k, v]
-    verb = "update" if exists else "create"
-    cmd = ["rclone", "config", verb, name] + ([] if exists else ["drive"]) + args + ["--non-interactive"]
-    capture(cmd, timeout=60)
+    cmd = ["rclone", "config", "update", name] if current else ["rclone", "config", "create", name, rtype]
+    capture(cmd + args + ["--non-interactive"], timeout=60)
     if name not in dump():
         raise RuntimeError("rclone did not save the remote")
+    return rtype
 
 
-def authorize_command(client_id: str = "", client_secret: str = "") -> str:
-    if client_id and client_secret:
-        return f'rclone authorize "drive" "{client_id}" "{client_secret}"'
-    return 'rclone authorize "drive"'
+def _has_option(name: str, key: str) -> bool:
+    return bool((dump().get(name) or {}).get(key))
+
+
+def authorize_command(rtype: str = "drive", client_id: str = "", client_secret: str = "") -> str:
+    if client_id:
+        return f'rclone authorize "{rtype}" "{client_id}" "{client_secret or "<client secret>"}"'
+    return f'rclone authorize "{rtype}"'
 
 
 def parse_iso(value: Optional[str]) -> Optional[datetime]:

@@ -1,9 +1,9 @@
-"""rclone status and Google Drive remote (re)configuration."""
+"""rclone status, connection tests and OAuth (re)authorisation of remotes."""
 from __future__ import annotations
 
 from flask import Blueprint, jsonify
 
-from ... import rclone
+from ... import backend, rclone
 from ...shell import CommandError
 from ...utils import now_iso
 from .common import error, json_body, manager, requires_auth_token
@@ -25,6 +25,8 @@ def overview():
         "available": True, "version": rclone.version(), "config_file": str(path) if path else None,
         "config_writable": rclone.config_writable(path), "repository_remote": rclone.remote_for_repository(),
         "remotes": remotes, "error": err, "versions": manager().db.list_file_versions("rclone"),
+        "backend": backend.detect(), "oauth_types": sorted(rclone.OAUTH_TYPES),
+        "creatable_types": sorted(rclone.CREATABLE_TYPES),
     })
 
 
@@ -39,39 +41,40 @@ def test():
 @bp.post("/api/rclone/authorize-command")
 def authorize_command():
     body = json_body() or {}
-    return jsonify({"command": rclone.authorize_command(str(body.get("client_id") or "").strip(),
+    return jsonify({"command": rclone.authorize_command(str(body.get("type") or "drive"),
+                                                        str(body.get("client_id") or "").strip(),
                                                         str(body.get("client_secret") or "").strip())})
 
 
-@bp.post("/api/rclone/drive")
+@bp.post("/api/rclone/authorize")
 @requires_auth_token
-def set_drive():
-    """Create or update a Google Drive remote from a pasted `rclone authorize` token, then test it."""
+def authorize():
+    """Re-authorise an existing OAuth remote (any type) or create a new one from a pasted `rclone authorize`
+    token, then test it. The current rclone config is kept as a previous version first."""
     body = json_body()
     if body is None:
         return error("Expected a JSON body.", 400)
     path = rclone.config_file()
     if not rclone.config_writable(path):
         return error(f"rclone config file {path} is not writable.", 409)
-    # Keep the previous file so a bad change can be undone.
+    name = str(body.get("name") or "").strip()
     try:
         if path and path.exists():
-            manager().db.add_file_version("rclone", path.read_text(), now_iso(),
-                                          f"before updating remote {body.get('name')}")
+            manager().db.add_file_version("rclone", path.read_text(), now_iso(), f"before authorising remote {name}")
     except OSError as e:
         return error("Could not back up the current rclone config.", 500, str(e))
+    extra = {k: str(body.get(k) or "").strip() for k in ("scope", "root_folder_id") if body.get(k)}
     try:
-        rclone.set_drive_remote(
-            name=str(body.get("name") or "").strip(), token=str(body.get("token") or "").strip(),
-            client_id=str(body.get("client_id") or "").strip(),
-            client_secret=str(body.get("client_secret") or "").strip(),
-            scope=str(body.get("scope") or "drive"), root_folder_id=str(body.get("root_folder_id") or "").strip())
+        rtype = rclone.set_oauth_remote(
+            name=name, token=str(body.get("token") or "").strip(),
+            client_id=str(body.get("client_id") or "").strip(), client_secret=str(body.get("client_secret") or "").strip(),
+            new_type=str(body.get("type") or "").strip() or None, extra=extra)
     except ValueError as e:
         return error(str(e), 400)
     except (CommandError, RuntimeError) as e:
         return error("rclone could not save the remote.", 500, getattr(e, "output", str(e)))
     manager().invalidate_snapshots()
-    return jsonify({"status": "saved", "test": rclone.test(str(body["name"]).strip())})
+    return jsonify({"status": "saved", "type": rtype, "test": rclone.test(name)})
 
 
 @bp.post("/api/rclone/versions/<int:version_id>/restore")
