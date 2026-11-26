@@ -5,7 +5,19 @@ let overview = null;
 
 function authCmd() {
   const id = $("rcClientId").value.trim(), secret = $("rcClientSecret").value.trim();
-  return id && secret ? `rclone authorize "drive" "${id}" "${secret}"` : `rclone authorize "drive"`;
+  if (!id) return `rclone authorize "drive"`;
+  return `rclone authorize "drive" "${id}" "${secret || "<your client secret>"}"`;
+}
+
+// Pre-fill the form from the remote being edited so re-authorising keeps its client and scope.
+function prefill() {
+  const r = overview?.remotes.find(x => x.name === $("rcName").value.trim());
+  if (r?.drive) {
+    $("rcScope").value = r.drive.scope === "drive.file" ? "drive.file" : "drive";
+    $("rcClientId").value = r.options.client_id || "";
+    $("rcRoot").placeholder = r.drive.root_folder_id ? `keep current (${r.drive.root_folder_id})` : "empty = none";
+  }
+  $("rcAuthCmd").textContent = authCmd();
 }
 
 export async function loadRclone() {
@@ -14,7 +26,7 @@ export async function loadRclone() {
   if (!overview.available) { $("rcOverview").innerHTML = `<p class="err">rclone is not installed in this container.</p>`; return; }
   $("rcVersion").textContent = overview.version;
   const repoRemote = overview.repository_remote;
-  if (!$("rcName").value) $("rcName").value = repoRemote || "gdrive";
+  if (!$("rcName").value) { $("rcName").value = repoRemote || "gdrive"; prefill(); }
   const remotes = overview.remotes.map(r => {
     const d = r.drive;
     const opts = Object.entries(r.options).filter(([k]) => k !== "token").map(([k, v]) => `${esc(k)} = ${esc(v)}`).join("<br>");
@@ -46,6 +58,7 @@ export async function loadRclone() {
 
 export function initRclone() {
   for (const id of ["rcClientId", "rcClientSecret"]) $(id).addEventListener("input", () => { $("rcAuthCmd").textContent = authCmd(); });
+  $("rcName").addEventListener("change", prefill);
   $("rcOverview").addEventListener("click", async (ev) => {
     const b = ev.target.closest("button[data-test]"); if (!b) return;
     const out = $("rctest-" + b.dataset.test);

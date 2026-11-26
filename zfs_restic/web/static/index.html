@@ -157,12 +157,12 @@
           <label>Remote name <input id="rcName" required></label>
           <label>Scope <select id="rcScope"><option value="drive">drive (full access)</option><option value="drive.file">drive.file (only files rclone created)</option></select></label>
           <label>Client ID <input id="rcClientId" placeholder="…apps.googleusercontent.com"></label>
-          <label>Client secret <input id="rcClientSecret" type="password" autocomplete="off"></label>
-          <label>Root folder ID <input id="rcRoot" placeholder="optional"></label>
+          <label>Client secret <input id="rcClientSecret" type="password" autocomplete="off" placeholder="empty = keep current"></label>
+          <label>Root folder ID <input id="rcRoot" placeholder="empty = keep current / none"></label>
           <label class="full"><span>Token: the JSON printed by <code>rclone authorize</code></span><textarea id="rcToken" rows="4" class="mono" placeholder='{"access_token":"…","token_type":"Bearer","refresh_token":"…","expiry":"…"}'></textarea></label>
           <div class="full row"><button class="primary" id="rcSave">Save &amp; test</button><span id="rcMsg" class="small"></span></div>
         </form>
-        <p class="muted small">Changing the client ID requires a new token made with that client: run the command above again after filling in the ID and secret. With scope <i>drive.file</i>, rclone can only see files it created, so keep <i>drive</i> for an existing repository.</p>
+        <p class="muted small">Empty fields keep the remote's current values, so to re-authorise you only need the token. A token only works with the client it was made with: if you change the client ID, generate a new token with it. With scope <i>drive.file</i>, rclone can only see files it created, so keep <i>drive</i> for an existing repository.</p>
       </div>
     </section>
     <section>

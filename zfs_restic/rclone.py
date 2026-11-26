@@ -155,7 +155,9 @@ def set_drive_remote(name: str, token: str, client_id: str = "", client_secret: 
     exists = name in dump()
     args: List[str] = []
     for k, v in params.items():
-        if v or exists:  # on update, empty values clear the option (e.g. back to no root folder)
+        # Empty fields never clear anything: re-authorising an existing remote with blank client fields
+        # must keep its own client_id/secret and root folder, or the remote silently breaks.
+        if v:
             args += [k, v]
     verb = "update" if exists else "create"
     cmd = ["rclone", "config", verb, name] + ([] if exists else ["drive"]) + args + ["--non-interactive"]

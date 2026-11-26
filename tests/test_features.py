@@ -238,6 +238,15 @@ def test_rclone_overview_and_drive_remote(rclone_env):
     assert gd["drive"]["own_client_id"] and gd["options"]["client_secret"] == "•••" and not gd["warnings"]
     assert len(c.get("/api/rclone", headers=AUTH).get_json()["versions"]) == 2
 
+    # Re-authorising with blank client fields must keep the remote's own client and root folder
+    c.post("/api/rclone/drive", json={"name": "gd", "token": tok, "root_folder_id": "ROOT1"}, headers=AUTH)
+    r = c.post("/api/rclone/drive", json={"name": "gd", "token": tok.replace('"x"', '"y"')}, headers=AUTH)
+    assert r.status_code == 200
+    from zfs_restic import rclone as rc
+    cfg = rc.dump()["gd"]
+    assert cfg["client_id"] == "id.apps.googleusercontent.com" and cfg["client_secret"] == "sec"
+    assert cfg["root_folder_id"] == "ROOT1" and '"y"' in cfg["token"]
+
     no_refresh = json.dumps({"access_token": "x"})
     assert c.post("/api/rclone/drive", json={"name": "gd", "token": no_refresh}, headers=AUTH).status_code == 400
     assert c.post("/api/rclone/drive", json={"name": "gd", "token": "nope"}, headers=AUTH).status_code == 400
