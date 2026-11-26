@@ -1,0 +1,4 @@
+#!/bin/bash
+# Test double for the real command; used only by tests/ via PATH.
+# fake: mount -t zfs <snap> <mp>
+snap="$3"; mp="$4"; cp -a "$FAKESNAPS/${snap//\//__}/." "$mp/"

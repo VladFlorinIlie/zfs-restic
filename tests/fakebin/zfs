@@ -1,0 +1,12 @@
+#!/bin/bash
+# Test double for the real command; used only by tests/ via PATH.
+# fake zfs: datasets are dirs under $FAKEPOOL, snapshots are copies under $FAKESNAPS
+set -e
+cmd="$1"; shift; [ "$1" = "-r" ] && shift  # v1 used recursive snapshot/destroy
+case "$cmd" in
+  snapshot) full="$1"; ds="${full%@*}"; [ -d "$FAKEPOOL/$ds" ] || { echo "cannot open '$ds': dataset does not exist" >&2; exit 1; }
+            d="$FAKESNAPS/${full//\//__}"; mkdir -p "$d"; cp -a "$FAKEPOOL/$ds/." "$d/";;
+  destroy)  rm -rf "$FAKESNAPS/${1//\//__}";;
+  list)     ls "$FAKESNAPS" 2>/dev/null | sed 's#__#/#g';;
+  *) echo "fake zfs: unsupported $*" >&2; exit 2;;
+esac

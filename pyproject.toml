@@ -1,0 +1,9 @@
+[project]
+name = "zfs-restic"
+dynamic = ["version"]
+description = "Back up ZFS datasets with restic, with a web UI and run history"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

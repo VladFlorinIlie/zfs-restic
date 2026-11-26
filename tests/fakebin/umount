@@ -1,0 +1,3 @@
+#!/bin/bash
+# Test double for the real command; used only by tests/ via PATH.
+find "$1" -mindepth 1 -delete

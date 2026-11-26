@@ -32,7 +32,8 @@ Each dataset is snapshotted **non-recursively**. Child datasets are separate mou
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, … | – | Standard restic variables (plus whatever your backend needs, e.g. `GOOGLE_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS`) |
+| `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, … | – | Standard restic variables, e.g. `RESTIC_REPOSITORY=rclone:gdrive:backups/restic` for Google Drive via rclone |
+| `RCLONE_*` | – | rclone reads its options from the environment, e.g. `RCLONE_CONFIG` or `RCLONE_DRIVE_USE_TRASH=false` (see below). Its config file defaults to `/root/.config/rclone/rclone.conf`. |
 | `AUTH_TOKEN` | unset | Protects the UI and API. Send it as a Bearer token, or as the password in Basic auth (any username). `/healthz` stays open. |
 | `DATA_DIR` | `/data` | Where the SQLite history lives. **Mount a persistent volume here.** |
 | `MAX_AGE_HOURS` | `36` | A dataset counts as stale when its newest snapshot is older than this |
@@ -77,3 +78,46 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: applicatio
 - restic exit code 3 (snapshot created, but some files were unreadable) is recorded as `partial`, not as a failure.
 - Retention (`forget --prune`) still runs if some datasets failed, but is skipped if every dataset failed.
 - The snapshot browser and downloads use `--no-lock`, so they never block or wait on a running backup.
+
+## Google Drive notes
+
+- **Pruned data goes to the Drive trash by default.** rclone moves deleted files to the trash, so space freed by `forget --prune` only comes back once Drive empties the trash (after 30 days). Set `RCLONE_DRIVE_USE_TRASH=false` to delete immediately. Keeping the trash on gives you a 30-day undo for a bad prune, at the cost of storage.
+- **Keep `rclone.conf` writable.** rclone saves refreshed OAuth tokens back into it.
+- **Browsing, downloads and `check --read-data-subset` all download from Drive**, so they count against Drive's API and download quotas. The snapshot list is cached for `SNAPSHOT_CACHE_TTL` seconds (default 600), so a health monitor polling `/api/health` doesn't hit Drive on every request.
+
+## Upgrading from v1
+
+Existing repositories, snapshots and `config.yml` work as they are. The mount paths (`/mnt/restic_backup_<dataset>`) and tags are unchanged, so new backups use your old snapshots as parents and share their retention groups.
+
+- **Mount a volume at `/data`.** The run history lives there. Without a volume it's lost when the container is recreated (backups are not affected).
+- **The start command changed** to `python3 -m zfs_restic`. If your TrueNAS app overrides the command (e.g. `python3 app.py`), remove that override.
+- **The base image is Debian 13**, so the container's ZFS tools are now 2.3.x (v1 shipped 2.1). This is a better match for current TrueNAS SCALE. If you're on an older release and `zfs snapshot` fails, compare the versions with `zfs version` on the host. To go back, build with `--build-arg DEBIAN_VERSION=12.15-slim` and edit the `sed` line, since bookworm's `debian.sources` is compatible.
+- **Snapshots are no longer taken recursively.** Child datasets were never part of the backup anyway (they're separate mounts), so add them to `datasets` explicitly if you want them backed up.
+
+## Project layout
+
+```
+zfs_restic/
+  __main__.py     entrypoint (python -m zfs_restic): validates config, starts waitress
+  settings.py     environment variables -> Settings
+  config.py       config.yml parsing and validation (v1 format)
+  manager.py      job lock, live status, snapshot cache, health
+  jobs.py         backup and check jobs
+  zfs.py          ZFS snapshot/mount operations
+  restic.py       restic operations and JSON parsing
+  notify.py       Gotify and healthcheck pings
+  storage.py      SQLite run history
+  shell.py        subprocess helpers
+  web/            Flask app: api.py (routes), auth.py, static/ (UI)
+tests/            pytest suite; fakebin/ holds fake zfs/mount/umount commands for end-to-end tests
+```
+
+## Development
+
+```sh
+pip install -r requirements-dev.txt
+pytest            # end-to-end tests need a `restic` binary on PATH; they are skipped otherwise
+docker build -t zfs-restic .
+```
+
+The end-to-end tests run a real restic against a local repository. `tests/fakebin` stands in for `zfs`, `mount` and `umount` by copying directories, so no ZFS pool or root access is needed.
