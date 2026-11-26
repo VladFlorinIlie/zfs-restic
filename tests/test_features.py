@@ -285,3 +285,14 @@ def test_unwritable_data_dir_does_not_stop_backups(env, tmp_path):
     assert m.history_warning and "NOT persistent" in m.history_warning
     assert c.get("/api/status").get_json()["history_warning"] == m.history_warning
     assert backup(c, m)["outcome"] == "success"
+
+
+def test_cron_backup_skipped_while_busy_notifies(env, http_sink):
+    addr, received = http_sink
+    m, c = make(env, gotify_url=f"http://{addr}/message", gotify_token="t")
+    assert c.post("/api/check", json={}).status_code == 202
+    r = c.post("/backup")
+    assert r.status_code == 409 and "check" in r.get_json()["message"]
+    assert m.wait_idle(120)
+    skipped = [x for x in received if x["json"]["title"].startswith("⚠️ Backup skipped")]
+    assert len(skipped) == 1 and skipped[0]["json"]["priority"] == 7

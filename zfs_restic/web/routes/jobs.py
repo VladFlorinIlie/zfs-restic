@@ -26,9 +26,15 @@ def healthz():
 @bp.post("/backup")
 @bp.post("/api/backup")
 def start_backup():
-    run_id = manager().start_job("backup", trigger=trigger())
+    m = manager()
+    run_id = m.start_job("backup", trigger=trigger())
     if run_id is None:
-        return jsonify({"status": "error", "message": "A job is already in progress."}), 409
+        running = m.live.get("job") or "job"
+        if trigger() == "api":  # scheduled run (cron): don't let a skipped backup go unnoticed
+            m.notifier.notify("⚠️ Backup skipped", f"A {running} was running when the scheduled backup was "
+                              "requested, so this backup did not run. Start it from the UI once it finishes.",
+                              "warning", lambda msg: print(msg, flush=True))
+        return jsonify({"status": "error", "message": f"A {running} is already in progress."}), 409
     return jsonify({"status": "success", "message": "Backup process started in the background.",
                     "run_id": run_id}), 202
 

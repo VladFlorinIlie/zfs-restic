@@ -55,7 +55,6 @@ class Settings:
         return cls(
             config_path=Path(env.get("CONFIG_PATH", d.config_path)),
             data_dir=Path(env.get("DATA_DIR", d.data_dir)),
-            mount_root=Path(env.get("MOUNT_ROOT", d.mount_root)),
             restore_dir=Path(env.get("RESTORE_DIR", d.restore_dir)),
             port=int(env.get("PORT", d.port)),
             auth_token=env.get("AUTH_TOKEN", ""),

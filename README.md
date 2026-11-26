@@ -41,7 +41,8 @@ Each dataset is snapshotted **non-recursively**. Child datasets are separate mou
 | `RCLONE_*` | – | rclone reads its options from the environment, e.g. `RCLONE_CONFIG` or `RCLONE_DRIVE_USE_TRASH=false` (see below). Its config file defaults to `/root/.config/rclone/rclone.conf`. |
 | `AUTH_TOKEN` | unset | Protects the UI and API. Send it as a Bearer token, or as the password in Basic auth (any username). `/healthz` stays open. |
 | `DATA_DIR` | `/data` | Where the SQLite history lives. **Mount a writable persistent folder here.** |
-| `MAX_AGE_HOURS` | `36` | A dataset counts as stale when its newest snapshot is older than this |
+| `MAX_AGE_HOURS` | `36` | A dataset counts as stale when its newest snapshot is older than this. Set it to your backup interval plus a margin, e.g. `192` for weekly backups. |
+| `RESTIC_CACHE_DIR` | inside the container | restic's metadata cache (index and directory trees). Point it at a writable mount outside your backed-up datasets so it survives container updates; otherwise every redeploy re-downloads it from the repository. |
 | `HISTORY_LIMIT` | `500` | Number of runs kept in history |
 | `RESTORE_DIR` | `/restore` | Where "restore to server" puts files, each restore in its own new folder. Mount a dedicated writable folder here (e.g. host `/mnt/tank/restores` → `/restore`); restores are disabled if it's missing or read-only. |
 | `GOTIFY_URL`, `GOTIFY_TOKEN` | unset | Gotify notifications, sent exactly as in v1 (`POST GOTIFY_URL?token=…`, priority 3/7/8 for success/partial/failure) |
@@ -77,10 +78,10 @@ Each dataset is snapshotted **non-recursively**. Child datasets are separate mou
 | POST | `/api/notifications/test` | Send a test notification to every channel |
 | GET | `/healthz` | Liveness check, no auth |
 
-Example TrueNAS cron jobs:
+Example TrueNAS cron jobs (`-f` makes curl fail on 401/409, so TrueNAS shows the run as failed). If a backup is requested while another job is running, it is skipped with a `409` and a "Backup skipped" notification:
 
 ```sh
-# nightly backup
+# scheduled backup
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/backup
 # weekly integrity check that reads 5% of the pack data
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
