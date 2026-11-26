@@ -70,6 +70,20 @@ def env(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def rclone_env(env, monkeypatch):
+    """Same as `env`, but the repository lives behind an rclone remote ("loc", type local)."""
+    if not shutil.which("rclone"):
+        pytest.skip("rclone binary not on PATH")
+    conf = env.root / "rclone.conf"
+    conf.write_text("[loc]\ntype = local\n")
+    repo = env.root / "rrepo"
+    monkeypatch.setenv("RCLONE_CONFIG", str(conf))
+    monkeypatch.setenv("RESTIC_REPOSITORY", f"rclone:loc:{repo}")
+    subprocess.run(["restic", "init", "-q"], check=True)
+    return env
+
+
+@pytest.fixture
 def manager(env):
     return BackupManager(env.settings)
 

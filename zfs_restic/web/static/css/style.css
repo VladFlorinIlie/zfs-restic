@@ -51,3 +51,30 @@ a.link { color: var(--accent); cursor: pointer; text-decoration: none; }
 .hidden { display: none !important; }
 .err { color: var(--bad); white-space: pre-wrap; font-family: var(--mono); font-size: 12px; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+/* --- tabs & forms --- */
+nav#tabs { display: flex; gap: 2px; padding: 0 24px; background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 61px; z-index: 4; overflow-x: auto; }
+nav#tabs a { padding: 10px 14px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+nav#tabs a:hover { color: var(--text); }
+nav#tabs a.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab { display: none; gap: 20px; }
+.tab.active { display: grid; }
+.grow { flex: 1; min-width: 200px; }
+textarea { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; width: 100%; }
+textarea.editor { font: 13px/1.5 var(--mono); min-height: 360px; resize: vertical; tab-size: 2; background: #0a0c10; }
+.formgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+.formgrid label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+.formgrid label input, .formgrid label select { width: 100%; }
+.formgrid .full { grid-column: 1 / -1; }
+a.button { display: inline-block; text-decoration: none; color: var(--text); background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; }
+a.button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+a.button.disabled { opacity: .45; pointer-events: none; }
+ol.steps { margin: 0 0 6px; padding-left: 20px; } ol.steps li { margin-bottom: 10px; } ol.steps pre { margin: 6px 0; }
+.msg-ok { color: var(--ok); } .msg-err { color: var(--bad); white-space: pre-wrap; } .msg-warn { color: var(--warn); }
+ul.plain { margin: 4px 0; padding-left: 18px; }
+.remote { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; margin-bottom: 10px; }
+.remote .warn { color: var(--warn); margin-top: 6px; }
+.bar { height: 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; margin: 6px 0; }
+.bar > div { height: 100%; background: var(--ok); } .bar.warnbar > div { background: var(--bad); }
+.mod-add { color: var(--ok); } .mod-del { color: var(--bad); } .mod-mod { color: var(--warn); }
+.tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11px; border: 1px solid currentColor; margin-left: 6px; }

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind        TEXT NOT NULL,              -- backup | check
+    kind        TEXT NOT NULL,              -- backup | check | restore
     trigger     TEXT NOT NULL,              -- api | ui
     started_at  TEXT NOT NULL,
     finished_at TEXT,
@@ -32,6 +32,17 @@ CREATE TABLE IF NOT EXISTS dataset_results (
     data_added       INTEGER,
     total_bytes      INTEGER,
     error            TEXT
+);
+CREATE TABLE IF NOT EXISTS file_versions (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind      TEXT NOT NULL,               -- config | rclone
+    saved_at  TEXT NOT NULL,
+    content   TEXT NOT NULL,
+    note      TEXT
+);
+CREATE TABLE IF NOT EXISTS kv (
+    key   TEXT PRIMARY KEY,
+    value TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_results_run ON dataset_results(run_id);
 CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at);
@@ -131,3 +142,33 @@ class Database:
                 (kind,),
             ).fetchone()
             return dict(row) if row else None
+
+    # --- previous versions of edited files (config.yml, rclone.conf) ---
+    def add_file_version(self, kind: str, content: str, saved_at: str, note: str = "", keep: int = 50) -> int:
+        with self._lock, self._conn() as c:
+            vid = c.execute("INSERT INTO file_versions (kind, saved_at, content, note) VALUES (?, ?, ?, ?)",
+                            (kind, saved_at, content, note)).lastrowid
+            c.execute("DELETE FROM file_versions WHERE kind = ? AND id NOT IN "
+                      "(SELECT id FROM file_versions WHERE kind = ? ORDER BY id DESC LIMIT ?)", (kind, kind, keep))
+            return vid
+
+    def list_file_versions(self, kind: str) -> List[Dict[str, Any]]:
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(
+                "SELECT id, saved_at, note, length(content) AS size FROM file_versions WHERE kind = ? "
+                "ORDER BY id DESC", (kind,))]
+
+    def get_file_version(self, kind: str, version_id: int) -> Optional[Dict[str, Any]]:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM file_versions WHERE kind = ? AND id = ?", (kind, version_id)).fetchone()
+            return dict(row) if row else None
+
+    # --- small key/value store ---
+    def kv_get(self, key: str) -> Optional[str]:
+        with self._conn() as c:
+            row = c.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+            return row["value"] if row else None
+
+    def kv_set(self, key: str, value: str):
+        self._write("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (key, value))

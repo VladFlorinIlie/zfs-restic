@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>zfs-restic</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 <header>
@@ -19,9 +19,19 @@
     <input id="subset" class="subset" placeholder="subset" title="read-data-subset, e.g. 2%. Empty = check.read_data_subset from config, or metadata only">
   </span>
 </header>
+<nav id="tabs">
+  <a data-tab="dashboard">Dashboard</a>
+  <a data-tab="snapshots">Snapshots</a>
+  <a data-tab="find">Find a file</a>
+  <a data-tab="config">Config</a>
+  <a data-tab="rclone">rclone</a>
+  <a data-tab="recovery">Recovery &amp; alerts</a>
+</nav>
 
 <main>
-  <div id="authBanner" class="banner hidden">AUTH_TOKEN is not set — anyone who can reach this port can trigger jobs and download files from your backups.</div>
+  <div id="authBanner" class="banner hidden">AUTH_TOKEN is not set: anyone who can reach this port can trigger jobs and download files from your backups. Editing the config, changing rclone and exporting secrets are disabled until it is set.</div>
+
+  <div id="historyBanner" class="banner hidden"></div>
 
   <section id="liveSection" class="hidden">
     <h2>Running <span id="liveKind" class="mono"></span><span class="spacer"></span><span id="liveDataset" class="mono"></span></h2>
@@ -42,42 +52,150 @@
     </div>
   </section>
 
-  <section>
-    <h2>Datasets <span class="spacer"></span><span id="healthPill"></span></h2>
-    <div class="body"><div id="cards" class="cards"><span class="muted">Loading…</span></div></div>
-  </section>
+  <!-- ===================== Dashboard ===================== -->
+  <div class="tab" id="tab-dashboard">
+    <section>
+      <h2>Datasets <span class="spacer"></span><span id="healthPill"></span></h2>
+      <div class="body"><div id="cards" class="cards"><span class="muted">Loading…</span></div></div>
+    </section>
+    <section>
+      <h2>History <span class="spacer"></span><button class="small" id="btnMoreRuns">Load more</button></h2>
+      <table>
+        <thead><tr><th>Started</th><th>Job</th><th>Trigger</th><th>Outcome</th><th class="num">Duration</th><th class="num">Datasets</th><th class="num">Data added</th></tr></thead>
+        <tbody id="runs"></tbody>
+      </table>
+    </section>
+  </div>
 
-  <section>
-    <h2>History <span class="spacer"></span><button class="small" id="btnMoreRuns">Load more</button></h2>
-    <table>
-      <thead><tr><th>Started</th><th>Job</th><th>Trigger</th><th>Outcome</th><th class="num">Duration</th><th class="num">Datasets</th><th class="num">Data added</th></tr></thead>
-      <tbody id="runs"></tbody>
-    </table>
-  </section>
-
-  <section>
-    <h2>Snapshots
-      <span class="spacer"></span>
-      <select id="snapFilter"><option value="">All datasets</option></select>
-      <button class="small" id="btnRefreshSnaps">Refresh</button>
-    </h2>
-    <div id="browser" class="body hidden" style="border-bottom:1px solid var(--border)">
-      <div class="row" style="margin-bottom:8px">
-        <b>Browsing <span id="brSnap" class="mono"></span></b>
-        <span class="spacer" style="flex:1"></span>
-        <button class="small" id="brZip">Download this folder (.zip)</button>
-        <button class="small" id="brClose">Close</button>
+  <!-- ===================== Snapshots ===================== -->
+  <div class="tab" id="tab-snapshots">
+    <section id="browser" class="hidden">
+      <h2>Browsing <span id="brSnap" class="mono"></span><span class="spacer"></span>
+        <button class="small" id="brRestore">Restore this folder to server</button>
+        <button class="small" id="brZip">Download folder (.zip)</button>
+        <button class="small" id="brClose">Close</button></h2>
+      <div class="body">
+        <div id="brCrumbs" class="crumbs"></div>
+        <div id="brBody"></div>
       </div>
-      <div id="brCrumbs" class="crumbs"></div>
-      <div id="brBody"></div>
-    </div>
-    <table>
-      <thead><tr><th>Time</th><th>ID</th><th>Dataset</th><th class="num">Added</th><th class="num">Size</th><th class="num">Files</th><th></th></tr></thead>
-      <tbody id="snaps"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
-    </table>
-  </section>
+    </section>
+    <section id="diffPanel" class="hidden">
+      <h2>Changes <span id="diffTitle" class="mono"></span><span class="spacer"></span>
+        <select id="diffFilter"><option value="">All</option><option value="+">Added</option><option value="-">Removed</option><option value="M">Modified</option></select>
+        <button class="small" id="diffClose">Close</button></h2>
+      <div class="body"><div id="diffBody"></div></div>
+    </section>
+    <section>
+      <h2>Snapshots <span class="spacer"></span>
+        <select id="snapFilter"><option value="">All datasets</option></select>
+        <button class="small" id="btnRefreshSnaps">Refresh</button></h2>
+      <table>
+        <thead><tr><th>Time</th><th>ID</th><th>Dataset</th><th class="num">Added</th><th class="num">Size</th><th class="num">Files</th><th></th></tr></thead>
+        <tbody id="snaps"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </section>
+  </div>
+
+  <!-- ===================== Find ===================== -->
+  <div class="tab" id="tab-find">
+    <section>
+      <h2>Find a file in every snapshot</h2>
+      <div class="body">
+        <form id="findForm" class="row">
+          <input id="findPattern" class="grow" placeholder="File name or glob, e.g. tax-2025.pdf or *.docx" required>
+          <select id="findDataset"><option value="">All datasets</option></select>
+          <label class="row small"><input type="checkbox" id="findIcase" checked> ignore case</label>
+          <button class="primary">Search</button>
+        </form>
+        <p class="muted small">Searches the directory trees of every snapshot, so the first search can take a while on Google Drive. Results show which snapshots contain each file, and flag files that are gone from the newest snapshot.</p>
+        <div id="findResults"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===================== Config ===================== -->
+  <div class="tab" id="tab-config">
+    <section>
+      <h2>config.yml <span id="cfgPath" class="mono muted"></span><span class="spacer"></span><span id="cfgState"></span></h2>
+      <div class="body">
+        <textarea id="cfgEditor" class="editor" spellcheck="false"></textarea>
+        <div class="row" style="margin-top:10px">
+          <button id="cfgValidate">Validate</button>
+          <button id="cfgPreview" title="restic forget --dry-run with the retention in the editor">Preview retention</button>
+          <button id="cfgSave" class="primary">Save</button>
+          <button id="cfgReload">Reload from disk</button>
+          <span id="cfgMsg" class="small"></span>
+        </div>
+        <div id="cfgValidation" style="margin-top:12px"></div>
+      </div>
+    </section>
+    <section id="retentionSection" class="hidden">
+      <h2>Retention preview <span class="muted small" id="retArgs"></span></h2>
+      <div class="body" id="retentionBody"></div>
+    </section>
+    <section>
+      <h2>Previous versions</h2>
+      <table><thead><tr><th>Saved</th><th>Note</th><th class="num">Size</th><th></th></tr></thead><tbody id="cfgVersions"></tbody></table>
+    </section>
+  </div>
+
+  <!-- ===================== rclone ===================== -->
+  <div class="tab" id="tab-rclone">
+    <section>
+      <h2>rclone <span class="spacer"></span><span id="rcVersion" class="muted small"></span></h2>
+      <div class="body" id="rcOverview"><span class="muted">Loading…</span></div>
+    </section>
+    <section>
+      <h2>Set up or re-authorise Google Drive</h2>
+      <div class="body">
+        <ol class="steps">
+          <li><b>Create your own OAuth client</b> (rclone's shared one is being retired): in <a class="link" href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> create a project, enable the <i>Google Drive API</i>, configure the OAuth consent screen and <b>publish it to "In production"</b> (in "Testing", Google revokes the token after 7 days), then create an OAuth client of type <i>Desktop app</i>. <a class="link" href="https://rclone.org/drive/#making-your-own-client-id" target="_blank" rel="noopener">rclone's guide</a></li>
+          <li><b>Get a token</b> on a machine with a browser and rclone installed (Windows, WSL or Linux): <pre id="rcAuthCmd" class="log">rclone authorize "drive"</pre> Sign in with the Google account that owns the backups; rclone prints a JSON token.</li>
+          <li><b>Paste it below and save.</b> The current rclone config is kept as a previous version, and the remote is tested straight away.</li>
+        </ol>
+        <form id="rcForm" class="formgrid">
+          <label>Remote name <input id="rcName" required></label>
+          <label>Scope <select id="rcScope"><option value="drive">drive (full access)</option><option value="drive.file">drive.file (only files rclone created)</option></select></label>
+          <label>Client ID <input id="rcClientId" placeholder="…apps.googleusercontent.com"></label>
+          <label>Client secret <input id="rcClientSecret" type="password" autocomplete="off"></label>
+          <label>Root folder ID <input id="rcRoot" placeholder="optional"></label>
+          <label class="full"><span>Token: the JSON printed by <code>rclone authorize</code></span><textarea id="rcToken" rows="4" class="mono" placeholder='{"access_token":"…","token_type":"Bearer","refresh_token":"…","expiry":"…"}'></textarea></label>
+          <div class="full row"><button class="primary" id="rcSave">Save &amp; test</button><span id="rcMsg" class="small"></span></div>
+        </form>
+        <p class="muted small">Changing the client ID requires a new token made with that client: run the command above again after filling in the ID and secret. With scope <i>drive.file</i>, rclone can only see files it created, so keep <i>drive</i> for an existing repository.</p>
+      </div>
+    </section>
+    <section>
+      <h2>Previous rclone configs</h2>
+      <table><thead><tr><th>Saved</th><th>Note</th><th></th></tr></thead><tbody id="rcVersions"></tbody></table>
+    </section>
+  </div>
+
+  <!-- ===================== Recovery ===================== -->
+  <div class="tab" id="tab-recovery">
+    <section>
+      <h2>Disaster-recovery kit <span class="spacer"></span><span id="kitExported" class="small"></span></h2>
+      <div class="body">
+        <p>If this server dies, you need three things to get your data back: the <b>repository location</b>, the <b>repository password</b> (without it the backups are unrecoverable by anyone) and access to <b>Google Drive</b>. The kit puts them on one page with step-by-step restore commands and your config.yml.</p>
+        <p class="muted">Print it or save it in your password manager, never on the server itself or in the same Google account.</p>
+        <div class="row">
+          <a class="button primary" id="kitSecrets" target="_blank" rel="noopener">Open kit with secrets</a>
+          <a class="button" id="kitMd">Download as Markdown (with secrets)</a>
+          <a class="button" href="/api/recovery-kit" target="_blank" rel="noopener">Preview without secrets</a>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2>Notifications</h2>
+      <div class="body">
+        <div id="notifChannels" class="muted"></div>
+        <div class="row" style="margin-top:10px"><button id="notifTest">Send test notification</button><span id="notifMsg" class="small"></span></div>
+        <p class="muted small">Gotify uses <code>GOTIFY_URL</code>/<code>GOTIFY_TOKEN</code>. Add more targets (Matrix, ntfy, Telegram, email…) with <code>APPRISE_URLS</code>, e.g. <code>matrixs://user:pass@matrix.example.com/!room:example.com</code>. <code>NOTIFY_SUCCESS=false</code> limits notifications to problems.</p>
+      </div>
+    </section>
+  </div>
 </main>
 
-<script src="/static/app.js"></script>
+<script type="module" src="/static/js/main.js"></script>
 </body>
 </html>

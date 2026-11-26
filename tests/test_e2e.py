@@ -116,4 +116,5 @@ def test_auth(env, manager):
 
 def test_ui_served(client):
     assert b"zfs-restic" in client.get("/").data
-    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/static/js/main.js").status_code == 200
+    assert client.get("/static/css/style.css").status_code == 200

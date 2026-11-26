@@ -63,3 +63,8 @@ def leftover_snapshots(datasets: Iterable[str]) -> List[str]:
         if m and any(m["dataset"] == ds or m["dataset"].startswith(ds + "/") for ds in datasets):
             found.append(name)
     return found
+
+
+def list_filesystems() -> List[str]:
+    out = capture(["zfs", "list", "-H", "-o", "name", "-t", "filesystem"], timeout=120)
+    return [l.strip() for l in out.splitlines() if l.strip()]

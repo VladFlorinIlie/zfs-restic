@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import zfs
 from .config import BackupConfig, load_config
@@ -24,6 +25,7 @@ class JobContext:
     restic: Restic
     notifier: Notifier
     live: Dict[str, Any]
+    storage_info: Optional[Callable[..., Optional[Dict[str, Any]]]] = None
 
     def log(self, message: str):
         for raw in str(message).rstrip("\n").splitlines() or [""]:
@@ -170,12 +172,36 @@ def run_backup(ctx: JobContext) -> JobOutcome:
         ctx.log(f"!!! {e}")
 
     outcome, details = summarize(results, problems)
+    storage_note = storage_warning(ctx)
+    if storage_note:
+        details += f"\n{storage_note}"
     title = {"success": "✅ Backup succeeded", "partial": "⚠️ Backup partially failed",
              "failure": "❌ Backup FAILED"}[outcome]
-    ctx.notifier.gotify(title, details, {"success": 3, "partial": 7, "failure": 8}[outcome], ctx.log,
-                        success=outcome == "success")
+    level = {"success": "success", "partial": "warning", "failure": "failure"}[outcome]
+    if storage_note and level == "success":
+        level = "warning"  # don't let NOTIFY_SUCCESS=false swallow a nearly-full Drive
+    ctx.notifier.notify(title, details, level, ctx.log)
     ctx.notifier.ping("success" if outcome == "success" else "fail", ctx.log, details)
     return outcome, details
+
+
+def storage_warning(ctx: JobContext) -> Optional[str]:
+    """A warning line when the rclone remote holding the repository is nearly full."""
+    if ctx.storage_info is None:
+        return None
+    try:
+        info = ctx.storage_info(refresh=True)
+    except Exception as e:
+        ctx.log(f"Could not check remote storage usage: {e}")
+        return None
+    if info and info.get("percent_used") is not None and info["percent_used"] >= ctx.settings.quota_warn_percent:
+        msg = (f"⚠️ {info['remote']} is {info['percent_used']:.0f}% full "
+               f"({human_bytes(info.get('free'))} free)")
+        if info.get("trashed"):
+            msg += f", {human_bytes(info['trashed'])} in trash"
+        ctx.log(msg)
+        return msg
+    return None
 
 
 # --- check ---
@@ -194,6 +220,25 @@ def run_check(ctx: JobContext, read_data_subset: Optional[str] = None) -> JobOut
     except Exception as e:
         outcome, details = "failure", f"Repository check failed: {e}"
         ctx.log(f"!!! {details}")
-    ctx.notifier.gotify("✅ Repository check passed" if outcome == "success" else "❌ Repository check FAILED",
-                        details, 3 if outcome == "success" else 8, ctx.log, success=outcome == "success")
+    ctx.notifier.notify("✅ Repository check passed" if outcome == "success" else "❌ Repository check FAILED",
+                        details, outcome, ctx.log)
+    return outcome, details
+
+
+# --- restore ---
+
+def run_restore(ctx: JobContext, snapshot_id: str, path: str, is_dir: bool, target: str) -> JobOutcome:
+    """Restore a file or directory from a snapshot into a new folder under RESTORE_DIR."""
+    try:
+        ctx.task(f"Restoring {path} from snapshot {snapshot_id[:8]}")
+        ctx.log(f"Destination: {target}")
+        ctx.restic.restore(snapshot_id, path, is_dir, Path(target), ctx.log, ctx.set_progress)
+        outcome, details = "success", f"Restored {path} from {snapshot_id[:8]} to {target}"
+    except Exception as e:
+        outcome, details = "failure", f"Restore of {path} from {snapshot_id[:8]} failed: {e}"
+        ctx.log(f"!!! {details}")
+    finally:
+        ctx.set_progress(None)
+    ctx.notifier.notify("✅ Restore finished" if outcome == "success" else "❌ Restore FAILED",
+                        details, outcome, ctx.log)
     return outcome, details

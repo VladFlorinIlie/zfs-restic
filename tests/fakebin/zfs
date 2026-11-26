@@ -7,6 +7,6 @@ case "$cmd" in
   snapshot) full="$1"; ds="${full%@*}"; [ -d "$FAKEPOOL/$ds" ] || { echo "cannot open '$ds': dataset does not exist" >&2; exit 1; }
             d="$FAKESNAPS/${full//\//__}"; mkdir -p "$d"; cp -a "$FAKEPOOL/$ds/." "$d/";;
   destroy)  rm -rf "$FAKESNAPS/${1//\//__}";;
-  list)     ls "$FAKESNAPS" 2>/dev/null | sed 's#__#/#g';;
+  list)     if [[ " $* " == *" filesystem "* ]]; then (cd "$FAKEPOOL" && find . -mindepth 1 -maxdepth 3 -type d | sed 's#^\./##'); else ls "$FAKESNAPS" 2>/dev/null | sed 's#__#/#g'; fi;;
   *) echo "fake zfs: unsupported $*" >&2; exit 2;;
 esac
