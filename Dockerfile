@@ -37,10 +37,15 @@ RUN curl -L https://rclone.org/install.sh | bash
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
-COPY app.py /app/app.py
-COPY backup.py /app/backup.py
+COPY app.py backup.py db.py /app/
+COPY static /app/static
 
 WORKDIR /app
 
+# Run history (SQLite). Mount a persistent host path / TrueNAS dataset here.
+ENV DATA_DIR=/data PYTHONUNBUFFERED=1
+VOLUME /data
+
 EXPOSE 8000
+HEALTHCHECK --interval=60s --timeout=5s --start-period=10s CMD curl -fsS http://127.0.0.1:8000/healthz || exit 1
 CMD ["python3", "app.py"]
