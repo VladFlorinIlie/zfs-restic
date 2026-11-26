@@ -64,9 +64,10 @@ export async function loadHealth() {
     const h = await api("/api/health", { allowStatus: [503] });
     if (h.error) throw new Error(h.error);
     state.datasets = h.datasets.map(d => d.dataset);
-    $("healthPill").innerHTML = h.ok ? `<span class="pill success">all good</span>`
-      : `<span class="pill failure">${h.storage?.warning && !h.datasets.some(d => d.stale) ? "storage nearly full" : "needs attention"}</span>`;
-    let html = h.datasets.map(d => {
+    const staleCount = h.datasets.filter(d => d.stale).length;
+    $("healthPill").innerHTML = !h.datasets.length ? "" : staleCount
+      ? `<span class="pill failure">${staleCount} stale</span>` : `<span class="pill success">all fresh</span>`;
+    const html = h.datasets.map(d => {
       const cls = d.stale ? "stale" : d.age_hours > h.max_age_hours * 0.75 ? "aging" : "";
       return `<div class="card ${cls}">
         <div class="name">${esc(d.dataset)}</div>
@@ -75,23 +76,32 @@ export async function loadHealth() {
         <div class="muted small">size ${bytes(d.latest_total_bytes)} · last added ${bytes(d.latest_data_added)}</div>
       </div>`;
     }).join("") || `<span class="muted">No datasets in config.</span>`;
-    const st = h.storage;
-    if (st && st.remote) {
-      html += `<div class="card ${st.warning ? "stale" : ""}">
-        <div class="name">${esc(st.remote)}: <span class="muted">storage</span></div>
-        <div class="age">${st.percent_used != null ? st.percent_used.toFixed(0) + "% used" : "?"}</div>
-        <div class="bar ${st.warning ? "warnbar" : ""}"><div style="width:${Math.min(st.percent_used || 0, 100)}%"></div></div>
-        <div class="muted small">${bytes(st.used)} of ${bytes(st.total)} · ${bytes(st.free)} free${st.trashed ? ` · ${bytes(st.trashed)} in trash` : ""}</div>
-      </div>`;
-    } else if (st && st.error) {
-      html += `<div class="card aging"><div class="name">storage</div><div class="err">${esc(st.error)}</div></div>`;
-    }
+    renderStorage(h.storage);
     $("cards").innerHTML = html;
     state.listeners.forEach(fn => fn("datasets"));
   } catch (e) {
     $("healthPill").innerHTML = `<span class="pill failure">repo unreachable</span>`;
     $("cards").innerHTML = `<div class="err">${esc(e.message)}</div>`;
   }
+}
+
+function renderStorage(st) {
+  // Only shown for rclone-backed repositories (other backends don't report usage).
+  $("storageSection").classList.toggle("hidden", !st || (!st.remote && !st.error));
+  if (!st) return;
+  if (st.error) {
+    $("storageRemote").textContent = "";
+    $("storagePill").innerHTML = `<span class="pill partial">unknown</span>`;
+    $("storageBody").innerHTML = `<div class="err">${esc(st.error)}</div>`;
+    return;
+  }
+  const pct = st.percent_used;
+  $("storageRemote").textContent = st.remote + ":";
+  $("storagePill").innerHTML = st.warning ? `<span class="pill failure">over ${st.warn_percent}%</span>` : `<span class="pill success">ok</span>`;
+  $("storageBody").innerHTML = `
+    <div class="row" style="justify-content:space-between"><b>${pct != null ? pct.toFixed(0) + "% used" : "usage unknown"}</b>
+      <span class="muted small">${bytes(st.used)} of ${bytes(st.total)} · ${bytes(st.free)} free${st.trashed ? ` · ${bytes(st.trashed)} in trash` : ""}</span></div>
+    <div class="bar ${st.warning ? "warnbar" : ""}"><div style="width:${Math.min(pct || 0, 100)}%"></div></div>`;
 }
 
 // ---------- history ----------
